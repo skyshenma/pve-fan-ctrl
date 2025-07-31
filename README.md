@@ -1,28 +1,35 @@
-# 🚀 本项目是基于 PVE 的分区风扇智能调速系统，通过实时监控磁盘温度，控制机箱上下两区风扇（机械硬盘区与主板区）的 PWM 转速，以实现静音与散热的动态平衡。
-#
-# 🔧 使用 it87 驱动（适配 IT8628E）实现硬件控制，支持 NVMe 与 SATA 温度读取，脚本支持自动识别 hwmon 路径、权限验证、重试机制、日志输出等功能。
+## 📦 项目名称：pve-fan-ctrl（PVE 智能分区风扇调速系统）
 
-# PVE 智能风扇温控系统部署指南（基于 it87 驱动）
+## 🧭 项目简介
 
-## 项目概述
+## 🚀 本项目旨在基于 Proxmox VE (PVE) 平台，通过 it87 驱动实现基于机械硬盘与 NVMe 温度的分层智能风扇控制。通过自动检测硬件温度，动态调整风扇 PWM 转速，保障系统稳定与硬盘安全。达到静音散热两不误的效果。
+##
+## 🔧 使用 it87 驱动（适配 IT8628E）实现硬件控制，支持 NVMe 与 SATA 温度读取，脚本支持自动识别 hwmon 路径、权限验证、重试机制、日志输出等功能。
 
-本项目旨在基于 Proxmox VE (PVE) 平台，通过 it87 驱动实现基于机械硬盘与 NVMe 温度的分层智能风扇控制。通过自动检测硬件温度，动态调整风扇 PWM 转速，保障系统稳定与硬盘安全。
+## PVE 智能风扇温控系统部署指南（基于 it87 驱动）
+##
+## 使用硬件为普通家用主板，散热pwm属实稀烂，加上做nas机械硬盘跟主板是不是一个仓，机箱用的是JONSBO N3，物理结构为上下两层，故此才有了此项目的诞生，其他机箱也一样使用，无非是确定好对应的pwm跟fan的控制，然后照猫画虎修改脚本即可，如果不会，那就问AI吧。
 
----
+### 项目概述
 
-## 目录
-
-1. [系统环境](#1-系统环境)  
-2. [前期准备](#2-前期准备)  
-3. [风扇与 PWM 对应关系](#3-风扇与-pwm-对应关系)  
-4. [脚本部署与服务配置](#4-脚本部署与服务配置)  
-5. [运行日志查看](#5-运行日志查看)  
-6. [脚本说明](#6-脚本说明)  
-7. [附录：脚本源代码](#7-附录脚本源代码)  
+你可以通过本项目提供的脚本生成器 `generate_disk_fan_control.sh` 快速生成自定义的风扇控制脚本 `disk_fan_control.sh`，支持 NVMe 与 HDD 独立温控策略，具备日志轮转、温控插值、失败重试等实用功能。
 
 ---
 
-## 1. 系统环境
+## 📁 项目结构
+
+```
+pve-fan-ctrl/
+├── generate_disk_fan_control.sh      # 生成器脚本（运行后生成控制脚本）
+├── disk_fan_control.sh               # 最终控制脚本（运行于后台）
+├── systemd/
+   └── disk-fan-control.service      # Systemd 服务配置文件
+└── README.md                         # 项目说明文档（当前文件）
+```
+
+---
+
+## 🧱 1. 系统环境
 
 本项目基于以下环境测试和开发：
 
@@ -35,46 +42,56 @@
 
 ---
 
-## 2. 前期准备
+## 🧰 2. 环境准备
 
-### 2.1 安装内核头文件
-
-确保安装与当前内核版本匹配的 headers，以便编译 it87 驱动。
+### 2.1 安装依赖包
 
 ```bash
 sudo apt update
+sudo apt install smartmontools lm-sensors build-essential -y
 apt search proxmox-headers
 ```
 
+### 2.2 安装内核头文件（匹配当前内核）
+
+```bash
+apt install pve-headers-$(uname -r)
+```
 或直接安装指定版本：
 
 ```bash
 apt install proxmox-headers-6.8.12-11-pve
 ```
 
-确认内核头文件目录存在：
 
-```bash
-ls /lib/modules/6.8.12-11-pve/build
-```
 
-### 2.2 编译并安装 it87 驱动
+### 2.3 编译安装 it87 驱动（推荐 shauno8 版本）
 
 ```bash
 git clone https://github.com/shauno8/it87.git
 cd it87
 make
-make install
+sudo make install
 ```
 
-### 2.3 加载 it87 模块（带参数）
+### 2.4 加载 it87 模块（支持 force 参数）
 
 ```bash
-modprobe -r it87 2>/dev/null
-modprobe it87 ignore_resource_conflict=1
+modprobe -r it87
+modprobe it87 ignore_resource_conflict=1 force_id=0x8620
 ```
 
-加载成功后，运行 `sensors` 可见类似输出：
+### 2.5 设置开机自动加载 it87 模块
+
+```bash
+echo "options it87 ignore_resource_conflict=1 force_id=0x8620" > /etc/modprobe.d/it87.conf
+echo "it87" >> /etc/modules
+update-initramfs -u
+```
+
+---
+
+### 2.6 加载成功后，运行 `sensors` 可见类似输出：
 
 ```
 it8628-isa-0a30
@@ -83,27 +100,19 @@ fan1:    1200 RPM
 pwm1:    255
 ```
 
-### 2.4 设置模块开机自动加载
+## 🌬️ 3. 硬件 PWM 通道与风扇区域对应
 
-写入 modprobe 配置：
+请根据主板传感器信息测试风扇与 PWM 通道的实际对应关系。
 
-```bash
-echo "options it87 ignore_resource_conflict=1" > /etc/modprobe.d/it87.conf
-```
+示例对应关系：
 
-添加模块到开机加载列表：
+| PWM 通道 | 控制区域            | 风扇编号       |
+| ------ | --------------- | ---------- |
+| pwm3   | 上层主板+NVMe       | fan3       |
+| pwm4   | 下层机械硬盘区         | fan4       |
+| pwm1/2 | CPU 风扇（BIOS 控制） | fan1, fan2 |
 
-```bash
-echo "it87" >> /etc/modules
-```
-
-更新 initramfs：
-
-```bash
-update-initramfs -u
-```
-
-### 2.5 验证风扇控制功能
+### 3.1 验证风扇控制功能
 
 1. 查看风扇与 PWM 是否存在：
 
@@ -124,7 +133,7 @@ systemctl enable fancontrol
 systemctl start fancontrol
 ```
 
-### 2.6 查找对应 hwmon 设备
+### 3.2 查找对应 hwmon 设备
 
 ```bash
 for d in /sys/class/hwmon/hwmon*; do
@@ -153,7 +162,7 @@ coretemp
 it8620
 ```
 
-### 2.7 查询并设置 pwm 模式
+### 3.3 查询并设置 pwm 模式
 
 列出 pwm 设备：
 
@@ -178,13 +187,13 @@ echo 1 > /sys/class/hwmon/hwmon4/pwm4_enable
 
 设置为 `2` 可恢复 BIOS 风扇控制。
 
-### 2.8 读取 pwm 模式示例
+### 3.4 读取 pwm 模式示例
 
 ```bash
 cat /sys/class/hwmon/hwmon4/pwm2_enable
 ```
 
-### 2.9 手动控制风扇示例
+### 3.5 手动控制风扇示例
 
 设置 pwm4 转速为 128：
 
@@ -200,71 +209,48 @@ echo 0 > /sys/class/hwmon/hwmon4/pwm4
 
 ---
 
-## 3. 风扇与 PWM 对应关系
+## ⚙️ 4. 脚本生成与配置流程
 
-通过测试确认：
+### 4.1 编辑 `generate_disk_fan_control.sh`
 
-| 风扇编号 | 位置               | PWM 通道 |
-| -------- | ------------------ | -------- |
-| fan4     | 下层机械硬盘仓     | PWM4     |
-| fan3     | 上层主板 + NVMe 区 | PWM3     |
-| fan1、fan2 | CPU 风扇（BIOS 控制） | 无需干预 |
+设置你的 PWM 通道路径：
+
+```bash
+PWM_NODES=(
+    "PWM3=\"\${HWMON_PATH}/pwm3\""
+    "PWM3_EN=\"\${HWMON_PATH}/pwm3_enable\""
+    "PWM4=\"\${HWMON_PATH}/pwm4\""
+    "PWM4_EN=\"\${HWMON_PATH}/pwm4_enable\""
+)
+```
+
+如风扇实际对应 PWM1/PWM2，可修改为：
+
+```bash
+PWM_NODES=(
+    "PWM3=\"\${HWMON_PATH}/pwm1\""
+    "PWM3_EN=\"\${HWMON_PATH}/pwm1_enable\""
+    "PWM4=\"\${HWMON_PATH}/pwm2\""
+    "PWM4_EN=\"\${HWMON_PATH}/pwm2_enable\""
+)
+```
+
+### 4.2 运行生成器脚本
+
+```bash
+chmod +x generate_disk_fan_control.sh
+sudo ./generate_disk_fan_control.sh
+```
+
+系统会提示你输入日志路径，并生成最终风扇控制脚本。
 
 ---
 
-## 4. 脚本部署与服务配置
+## 🖥️ 5. 添加 Systemd 后台运行支持
 
-### 4.1 脚本编写与保存路径
+### 5.1 创建服务文件
 
-建议将风扇智能控制脚本保存至：
-
-```
-/usr/local/bin/disk_fan_control.sh
-```
-
-### 4.1.1 脚本功能说明
-
-下列为 disk_fan_control.sh 脚本的详细功能结构与逻辑流程说明。
-
-#### 功能模块说明
-
-  - **权限检查**：脚本必须以 root 权限执行
-  - **日志记录**：所有运行状态、错误与温度数据写入 /var/log/disk_fan_control.log
-  - **驱动初始化**：自动加载 it87 风扇控制驱动并检测有效 hwmon 路径
-  - **PWM 通道切换机制**：自动将 PWM3 与 PWM4 通道切换为手动模式（pwmX_enable=1）
-  - **模式验证与重试逻辑**：若切换失败将每 10 秒重试一次，最长尝试 10 分钟，确保切换成功
-  - **温度获取（NVMe & HDD）**：支持多个磁盘通道，自动读取最大温度值
-  - **PWM 值线性计算**：根据磁盘温度插值计算 PWM 输出值，保障温控平滑
-  - **控制信号写入**：将计算出的 PWM3 和 PWM4 值写入硬件接口
-  - **主循环机制**：每 20 秒执行一次温控评估与 PWM 调整
-
-#### 支持设备说明
-  - ✅ NVMe 磁盘（如 /dev/nvme0n1, /dev/nvme1n1）
-  - ✅ SATA HDD/SSD（如 /dev/sdb ~ /dev/sde）
-  - ✅ 需支持 it87 模拟或原生风扇控制器
-
-#### 可调节参数（支持环境变量）
-
-| 参数名称      | 默认值 | 说明                       |
-|--------------|--------|----------------------------|
-| MIN_NVME_TEMP | 35     | NVMe 温控启动温度           |
-| MAX_NVME_TEMP | 60     | NVMe 温控最大阈值           |
-| MIN_HDD_TEMP  | 35     | HDD 温控启动温度            |
-| MAX_HDD_TEMP  | 55     | HDD 温控最大阈值            |
-| MIN_PWM_NVME  | 80     | NVMe 温度对应最低 PWM 输出值 |
-| MAX_PWM_NVME  | 255    | NVMe 温度对应最高 PWM 输出值 |
-| MIN_PWM_HDD   | 80     | HDD 温度对应最低 PWM 输出值  |
-| MAX_PWM_HDD   | 255    | HDD 温度对应最高 PWM 输出值  |
-
-### 4.2 添加执行权限
-
-```bash
-sudo chmod +x /usr/local/bin/disk_fan_control.sh
-```
-
-### 4.3 配置 systemd 服务
-
-创建服务文件 `/etc/systemd/system/disk-fan-control.service`，内容如下：
+路径：`/etc/systemd/system/disk-fan-control.service`
 
 ```ini
 [Unit]
@@ -287,93 +273,114 @@ StandardError=append:/var/log/disk_fan_control.log
 WantedBy=multi-user.target
 ```
 
-### 4.4 启动并设置自启
+### 5.2 启动服务
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable disk-fan-control.service
-sudo systemctl start disk-fan-control.service
+sudo systemctl enable disk-fan-control.service --now
 ```
 
-### 4.5 查看服务状态
+### 5.3 检查状态
 
 ```bash
 sudo systemctl status disk-fan-control.service
 ```
 
-示例输出：
+---
 
-```
-● disk-fan-control.service - Disk-based Fan Control Service
-     Loaded: loaded (/etc/systemd/system/disk-fan-control.service; enabled)
-     Active: active (running)
-```
+## 📌 6. 参数说明（可通过环境变量覆盖）
+
+| 变量名称               | 默认值                              | 含义                |
+| ------------------ | -------------------------------- | ----------------- |
+| MIN\_NVME\_TEMP    | 35                               | NVMe 开始转速温度       |
+| MAX\_NVME\_TEMP    | 60                               | NVMe 最大温控温度       |
+| MIN\_HDD\_TEMP     | 35                               | HDD 开始转速温度        |
+| MAX\_HDD\_TEMP     | 55                               | HDD 最大温控温度        |
+| MIN\_PWM\_NVME     | 80                               | NVMe 对应最低 PWM 输出值 |
+| MAX\_PWM\_NVME     | 255                              | NVMe 对应最高 PWM 输出值 |
+| MIN\_PWM\_HDD      | 80                               | HDD 对应最低 PWM 输出值  |
+| MAX\_PWM\_HDD      | 255                              | HDD 对应最高 PWM 输出值  |
+| NVME\_TEMP\_FIELDS | Temperature                      | smartctl 输出字段匹配   |
+| HDD\_TEMP\_FIELD   | Temperature\_Celsius             | smartctl 字段名      |
+| SLEEP\_INTERVAL    | 20                               | 控制循环间隔时间（秒）       |
+| LOG\_FILE          | /root/log/disk\_fan\_control.log | 日志路径              |
 
 ---
 
-## 5. 运行日志查看
+## 📊 7. 日志与调试
 
-日志文件路径：
-
-```
-/var/log/disk_fan_control.log
-```
-
-实时查看日志：
+查看运行日志：
 
 ```bash
-tail -f /var/log/disk_fan_control.log
+tail -f /root/log/disk_fan_control.log
 ```
 
----
+日志文件会在超过 1MB 时轮转，并保留最多 5 个备份。
 
-## 6. 脚本说明（`disk_fan_control.sh`）
-
-### 6.1 功能概述
-
-- 读取机械硬盘 `/dev/sd[b-e]` 和 NVMe `/dev/nvme[0-1]n1` 的 SMART 温度
-- 自动识别 it86xx 芯片对应的 `/sys/class/hwmon/hwmonX` 路径
-- 根据 HDD 和 NVMe 的最大温度决定 PWM 风扇转速
-- 支持上下层风扇分别控制，实现分区温控
-
-### 6.2 主要功能模块
-
-#### 6.2.1 获取磁盘温度 `get_disk_temp()`
-
-- 通过 `smartctl` 命令读取指定磁盘的温度
-- 返回温度值，供风扇转速计算参考
-
-#### 6.2.2 主循环
-
-- 每 20 秒扫描所有目标磁盘温度
-- 计算最大温度，映射至 PWM 转速值
-- 调整对应 hwmon pwm 通道的风扇速度
-- 记录日志，便于调试与监控
-
----
-
-## 7. 附录：脚本源代码
-
-完整脚本内容可在项目仓库中查看或下载：  
-https://github.com/skyshenma/pve-fan-ctrl/pve-disk-fan-control
-
-完整脚本源代码请参考项目仓库或联系维护者索取。后续版本将持续更新并完善。
-
----
-
-## 额外说明
-
-- 每次 PVE 升级内核后，可能需要重新编译并安装 it87 驱动。
-- 建议保留 `it87` 驱动源码目录，方便快速重装。
-- 使用 `dkms` 可实现驱动自动编译安装，提升维护便捷性。
-
----
-
-### 赋权并重启服务示例
+检查温度字段：
 
 ```bash
-sudo chmod +x /usr/local/bin/disk_fan_control.sh
-sudo systemctl restart disk-fan-control.service
+smartctl -A /dev/nvme0n1
+smartctl -A /dev/sdb
+```
+
+查看 PWM 可用通道：
+
+```bash
+ls /sys/class/hwmon/hwmon*/pwm*
 ```
 
 ---
+
+## 🧪 8. 高级说明：控制脚本逻辑结构
+
+### 8.1 模块结构
+
+* `rotate_log()`：日志轮转模块
+* `ensure_pwm_manual_mode()`：切换 PWM 为手动模式，具备最大重试时间
+* `init_hwmon_path()`：识别 hwmon 路径并初始化 PWM 控制路径
+* `get_disk_temp()`：从 smartctl 输出中提取温度
+* `adjust_pwm()`：温度线性插值，转为 PWM 值
+
+### 8.2 主循环逻辑
+
+1. 扫描并获取所有 NVMe 与 HDD 温度
+2. 取每类设备最大温度作为判断依据
+3. 插值算法生成对应 PWM 输出值
+4. 写入 PWM 节点（路径由变量配置）
+5. 每隔 20 秒运行一次
+
+---
+
+## 🔐 9. 权限说明
+
+* 脚本需 `root` 权限运行（用于读写 `/sys/class/hwmon` 及 smartctl）
+* systemd 服务配置中使用 `User=root`
+
+---
+
+## 📌 10. 注意事项
+
+* PVE 内核更新后如无法识别 PWM，需重新编译 it87 驱动
+* 推荐保留 `it87` 驱动源码目录，方便重复编译安装
+* 确保 `smartctl` 可以访问所有 NVMe/HDD 设备，否则将影响风扇控制
+* 可结合 `dkms` 方式将驱动自动集成进内核升级流程
+
+---
+
+## 🧾 License
+
+MIT License
+
+---
+
+## 🙏 致谢
+
+* 本项目基于社区贡献与 shauno8 的 IT87 驱动开发
+* 致谢所有为 Linux 风扇控制、温控策略与 smart 工具开发做出贡献的开发者
+
+---
+
+## 🔗 项目地址
+
+GitHub: [https://github.com/skyshenma/pve-fan-ctrl](https://github.com/skyshenma/pve-fan-ctrl)

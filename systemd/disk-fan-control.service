@@ -1,0 +1,18 @@
+[Unit]
+Description=Disk-based Fan Control Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/disk_fan_control.sh
+ExecStartPre=/usr/bin/test -x /usr/local/bin/disk_fan_control.sh
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=4
+StandardOutput=append:/var/log/disk_fan_control.log
+StandardError=append:/var/log/disk_fan_control.log
+
+[Install]
+WantedBy=multi-user.target
