@@ -355,7 +355,7 @@ tail -f /var/log/disk_fan_control.log
 ## 7. 附录：脚本源代码
 
 完整脚本内容可在项目仓库中查看或下载：  
-https://github.com/yourusername/pve-disk-fan-control
+https://github.com/skyshenma/pve-fan-ctrl/pve-disk-fan-control
 
 完整脚本源代码请参考项目仓库或联系维护者索取。后续版本将持续更新并完善。
 
