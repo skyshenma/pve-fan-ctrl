@@ -327,10 +327,12 @@ sudo systemctl status disk-fan-control.service
 ```bash
 tail -f /var/log/disk_fan_control.log
 ```
+### 7.1 日志轮转说明：
+每天 00:01，日志归档为 disk_fan_control.YYYY-MM-DD.log（如 disk_fan_control.2025-07-31.log）。
+超过 30 天的 .log 文件压缩为 .gz。
+超过 180 天的 .log.gz 文件被删除。
 
-日志文件会在超过 1MB 时轮转，并保留最多 5 个备份。
-
-检查温度字段：
+### 7.2 检查温度字段：
 
 ```bash
 smartctl -A /dev/nvme0n1
