@@ -36,6 +36,30 @@ MAX_RETRY=60
 read -p "请输入日志文件路径（默认：$DEFAULT_LOG_FILE）：" CUSTOM_LOG_FILE
 LOG_FILE="${CUSTOM_LOG_FILE:-$DEFAULT_LOG_FILE}"
 
+# 检查并创建日志目录和文件
+LOG_DIR=$(dirname "$LOG_FILE")
+if [ ! -d "$LOG_DIR" ]; then
+    echo "📁 日志目录 $LOG_DIR 不存在，正在创建..."
+    mkdir -p "$LOG_DIR"
+    if [ $? -ne 0 ]; then
+        echo "❗ 无法创建日志目录 $LOG_DIR，请检查权限！"
+        exit 1
+    fi
+    echo "✅ 日志目录 $LOG_DIR 已创建。"
+fi
+
+# 确保日志文件存在
+if [ ! -f "$LOG_FILE" ]; then
+    echo "📄 日志文件 $LOG_FILE 不存在，正在创建..."
+    touch "$LOG_FILE"
+    if [ $? -ne 0 ]; then
+        echo "❗ 无法创建日志文件 $LOG_FILE，请检查权限！"
+        exit 1
+    fi
+    chmod 644 "$LOG_FILE"
+    echo "✅ 日志文件 $LOG_FILE 已创建。"
+fi
+
 # === 渲染模板 ===
 read -r -d '' TEMPLATE <<EOF
 #!/bin/bash
@@ -191,7 +215,7 @@ MIN_HDD_TEMP="\${MIN_HDD_TEMP:-$MIN_HDD_TEMP}"
 MAX_HDD_TEMP="\${MAX_HDD_TEMP:-$MAX_HDD_TEMP}"
 
 MIN_PWM_NVME="\${MIN_PWM_NVME:-$MIN_PWM_NVME}"
-MAX_PWM_NVME="\${MAX_PWM_NVME:-$MIN_PWM_NVME}"
+MAX_PWM_NVME="\${MAX_PWM_NVME:-$MAX_PWM_NVME}"
 MIN_PWM_HDD="\${MIN_PWM_HDD:-$MIN_PWM_HDD}"
 MAX_PWM_HDD="\${MAX_PWM_HDD:-$MAX_PWM_HDD}"
 
@@ -238,9 +262,24 @@ TARGET_FILE="./disk_fan_control.sh"
 read -p "请输入要生成的脚本路径（默认：$TARGET_FILE）：" CUSTOM_PATH
 [[ -n "$CUSTOM_PATH" ]] && TARGET_FILE="$CUSTOM_PATH"
 
+# 检查并创建目标脚本目录
+TARGET_DIR=$(dirname "$TARGET_FILE")
+if [ ! -d "$TARGET_DIR" ]; then
+    echo "📁 目标脚本目录 $TARGET_DIR 不存在，正在创建..."
+    mkdir -p "$TARGET_DIR"
+    if [ $? -ne 0 ]; then
+        echo "❗ 无法创建目标脚本目录 $TARGET_DIR，请检查权限！"
+        exit 1
+    fi
+    echo "✅ 目标脚本目录 $TARGET_DIR 已创建。"
+fi
+
 echo "$TEMPLATE" > "$TARGET_FILE"
 chmod +x "$TARGET_FILE"
 
 echo "✅ 已生成风扇控制脚本：$TARGET_FILE"
 echo "ℹ️ 运行 'ls /sys/class/hwmon/*/pwm*' 查看可用 PWM 节点。"
+echo "ℹ️ 运行 'smartctl -A /dev/nvme0n1' 或 'smartctl -A /dev/sdX' 查看实际温度字段
 echo "ℹ️ 日志文件路径已设置为 $LOG_FILE，会自动轮转，最大大小为 $((LOG_MAX_SIZE / 1024))KB，保留 $LOG_BACKUPS 个压缩备份。"
+echo "ℹ️ 已检查并创建日志目录 $LOG_DIR 和日志文件 $LOG_FILE。"
+echo "ℹ️ 设备路径已使用动态通配符（NVMe: /dev/nvme*n1, HDD: /dev/sd[b-z]），无需手动配置设备列表。"
