@@ -153,7 +153,7 @@ init_hwmon_path() {
     echo "\$(date '+%F %T'): 正在初始化风扇控制模块..." >> "\$LOG_FILE"
     rotate_log
     modprobe -r it87 >/dev/null 2>&1
-    modprobe it87 force_id=0x8620 ignore_resource_conflict=1
+    modprobe it87 force_id=0x8613 ignore_resource_conflict=1
     sleep 2
 
     local HWMON_NAME=\$(grep -il "it86" /sys/class/hwmon/hwmon*/name | head -n1)
