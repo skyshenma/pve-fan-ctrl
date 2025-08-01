@@ -190,7 +190,7 @@ echo 1 > /sys/class/hwmon/hwmon4/pwm4_enable
 ### 3.4 读取 pwm 模式示例
 
 ```bash
-cat /sys/class/hwmon/hwmon4/pwm2_enable
+cat /sys/class/hwmon/hwmon4/pwm4_enable
 ```
 
 ### 3.5 手动控制风扇示例
@@ -282,8 +282,15 @@ WantedBy=multi-user.target
 ### 5.2 启动服务
 
 ```bash
+sudo systemctl daemon-reexec
 sudo systemctl daemon-reload
 sudo systemctl enable disk-fan-control.service --now
+```
+
+重启service
+
+```bash
+sudo systemctl restart disk-fan-control.service
 ```
 
 ### 5.3 检查状态
@@ -309,7 +316,7 @@ sudo systemctl status disk-fan-control.service
 | NVME\_TEMP\_FIELDS | Temperature                      | smartctl 输出字段匹配   |
 | HDD\_TEMP\_FIELD   | Temperature\_Celsius             | smartctl 字段名      |
 | SLEEP\_INTERVAL    | 20                               | 控制循环间隔时间（秒）       |
-| LOG\_FILE          | /root/log/disk\_fan\_control.log | 日志路径              |
+| LOG\_FILE          | /var/log/disk\_fan\_control.log | 日志路径              |
 
 ---
 
@@ -318,7 +325,7 @@ sudo systemctl status disk-fan-control.service
 查看运行日志：
 
 ```bash
-tail -f /root/log/disk_fan_control.log
+tail -f /var/log/disk_fan_control.log
 ```
 
 日志文件会在超过 1MB 时轮转，并保留最多 5 个备份。
