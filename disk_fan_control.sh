@@ -4,22 +4,35 @@
 [[ $EUID -ne 0 ]] && echo "❗ 请以 root 权限运行该脚本（使用 sudo）" && exit 1
 
 LOG_FILE="/root/log/disk_fan_control.log"
-LOG_MAX_SIZE=1048576
-LOG_BACKUPS=5
+LOG_MAX_AGE_DAYS=30
+LOG_MAX_GZ_AGE_DAYS=180
 mkdir -p "$(dirname "$LOG_FILE")"
 
 # 📜 模块：日志轮转
 rotate_log() {
-    if [ -f "$LOG_FILE" ] && [ $(stat -c %s "$LOG_FILE" 2>/dev/null) -gt $LOG_MAX_SIZE ]; then
-        echo "$(date '+%F %T'): 📜 日志文件超过 $LOG_MAX_SIZE 字节，开始轮转" >> "$LOG_FILE"
-        for ((i=LOG_BACKUPS; i>0; i--)); do
-            [ -f "$LOG_FILE.$i.gz" ] && mv "$LOG_FILE.$i.gz" "$LOG_FILE.$((i+1)).gz"
-        done
-        mv "$LOG_FILE" "$LOG_FILE.1"
-        gzip "$LOG_FILE.1"
+    # 生成日期命名的归档文件（使用前一天的日期）
+    local ARCHIVE_FILE="$(dirname "$LOG_FILE")/$(basename "$LOG_FILE" .log).$(date -d 'yesterday' '+%Y-%m-%d').log"
+    if [ -f "$LOG_FILE" ]; then
+        mv "$LOG_FILE" "$ARCHIVE_FILE"
         : > "$LOG_FILE"  # 清空当前日志文件
-        echo "$(date '+%F %T'): 📜 日志轮转完成" >> "$LOG_FILE"
+        echo "$(date '+%F %T'): 📜 日志已归档为 $ARCHIVE_FILE" >> "$LOG_FILE"
     fi
+
+    # 压缩超过 1 个月的日志文件
+    find "$(dirname "$LOG_FILE")" -name "$(basename "$LOG_FILE" .log).*.log" -mtime +$LOG_MAX_AGE_DAYS -exec sh -c '
+        for file; do
+            gzip "$file"
+            echo "$(date '+%F %T'): 📦 压缩日志文件 $file 为 $file.gz" >> "{}"
+        done
+    ' sh {} \;
+
+    # 删除超过 6 个月的压缩日志
+    find "$(dirname "$LOG_FILE")" -name "$(basename "$LOG_FILE" .log).*.log.gz" -mtime +$LOG_MAX_GZ_AGE_DAYS -exec sh -c '
+        for file; do
+            rm "$file"
+            echo "$(date '+%F %T'): 🗑️ 删除超过 $LOG_MAX_GZ_AGE_DAYS 天的压缩日志 $file" >> "{}"
+        done
+    ' sh {} \;
 }
 
 # 🔁 模块：安全切换为手动模式（带重试、延时与验证）
@@ -154,7 +167,7 @@ MIN_HDD_TEMP="${MIN_HDD_TEMP:-35}"
 MAX_HDD_TEMP="${MAX_HDD_TEMP:-55}"
 
 MIN_PWM_NVME="${MIN_PWM_NVME:-80}"
-MAX_PWM_NVME="${MAX_PWM_NVME:-80}"
+MAX_PWM_NVME="${MAX_PWM_NVME:-255}"
 MIN_PWM_HDD="${MIN_PWM_HDD:-80}"
 MAX_PWM_HDD="${MAX_PWM_HDD:-255}"
 
@@ -166,6 +179,11 @@ init_hwmon_path
 
 # 🧩 主控制循环
 while true; do
+    # 检查是否为 00:01 触发日志轮转
+    if [ "$(date '+%H:%M')" = "00:01" ]; then
+        rotate_log
+    fi
+
     NVME_TEMPS=()
     for dev in /dev/nvme*n1; do
         [ -e "$dev" ] && T=$(get_disk_temp "$dev") && [[ "$T" -gt 0 ]] && NVME_TEMPS+=("$T")
@@ -191,6 +209,5 @@ while true; do
     }
 
     echo "$(date '+%F %T'): NVMe=${NVME_TEMP}°C, HDD=${HDD_TEMP}°C, PWM3=${PWM3_VAL}, PWM4=${PWM4_VAL}" >> "$LOG_FILE"
-    rotate_log
     sleep 20
 done
