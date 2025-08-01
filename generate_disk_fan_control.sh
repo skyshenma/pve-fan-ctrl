@@ -26,9 +26,9 @@ NVME_TEMP_FIELDS="Temperature|Temperature Sensor"  # NVMe 温度字段（正则�
 HDD_TEMP_FIELD="Temperature_Celsius"               # HDD 温度字段
 
 # 📜 日志参数
-DEFAULT_LOG_FILE="/root/log/disk_fan_control.log"  # 默认日志路径
-LOG_MAX_SIZE=$((1 * 1024 * 1024))                  # 日志最大大小（字节，1MB）
-LOG_BACKUPS=5                                      # 保留的日志备份数
+DEFAULT_LOG_FILE="/var/log/disk_fan_control.log"  # 默认日志路径
+LOG_MAX_AGE_DAYS=30                                # 未压缩日志保留天数（1 个月）
+LOG_MAX_GZ_AGE_DAYS=180                            # 压缩日志保留天数（6 个月）
 SLEEP_INTERVAL=20
 MAX_RETRY=60
 
@@ -68,22 +68,35 @@ read -r -d '' TEMPLATE <<EOF
 [[ \$EUID -ne 0 ]] && echo "❗ 请以 root 权限运行该脚本（使用 sudo）" && exit 1
 
 LOG_FILE="$LOG_FILE"
-LOG_MAX_SIZE=$LOG_MAX_SIZE
-LOG_BACKUPS=$LOG_BACKUPS
+LOG_MAX_AGE_DAYS=$LOG_MAX_AGE_DAYS
+LOG_MAX_GZ_AGE_DAYS=$LOG_MAX_GZ_AGE_DAYS
 mkdir -p "\$(dirname "\$LOG_FILE")"
 
 # 📜 模块：日志轮转
 rotate_log() {
-    if [ -f "\$LOG_FILE" ] && [ \$(stat -c %s "\$LOG_FILE" 2>/dev/null) -gt \$LOG_MAX_SIZE ]; then
-        echo "\$(date '+%F %T'): 📜 日志文件超过 \$LOG_MAX_SIZE 字节，开始轮转" >> "\$LOG_FILE"
-        for ((i=LOG_BACKUPS; i>0; i--)); do
-            [ -f "\$LOG_FILE.\$i.gz" ] && mv "\$LOG_FILE.\$i.gz" "\$LOG_FILE.\$((i+1)).gz"
-        done
-        mv "\$LOG_FILE" "\$LOG_FILE.1"
-        gzip "\$LOG_FILE.1"
+    # 生成日期命名的归档文件（使用前一天的日期）
+    local ARCHIVE_FILE="\$(dirname "\$LOG_FILE")/\$(basename "\$LOG_FILE" .log).\$(date -d 'yesterday' '+%Y-%m-%d').log"
+    if [ -f "\$LOG_FILE" ]; then
+        mv "\$LOG_FILE" "\$ARCHIVE_FILE"
         : > "\$LOG_FILE"  # 清空当前日志文件
-        echo "\$(date '+%F %T'): 📜 日志轮转完成" >> "\$LOG_FILE"
+        echo "\$(date '+%F %T'): 📜 日志已归档为 \$ARCHIVE_FILE" >> "\$LOG_FILE"
     fi
+
+    # 压缩超过 1 个月的日志文件
+    find "\$(dirname "\$LOG_FILE")" -name "\$(basename "\$LOG_FILE" .log).*.log" -mtime +\$LOG_MAX_AGE_DAYS -exec sh -c '
+        for file; do
+            gzip "\$file"
+            echo "\$(date '+%F %T'): 📦 压缩日志文件 \$file 为 \$file.gz" >> "{}"
+        done
+    ' sh {} \;
+
+    # 删除超过 6 个月的压缩日志
+    find "\$(dirname "\$LOG_FILE")" -name "\$(basename "\$LOG_FILE" .log).*.log.gz" -mtime +\$LOG_MAX_GZ_AGE_DAYS -exec sh -c '
+        for file; do
+            rm "\$file"
+            echo "\$(date '+%F %T'): 🗑️ 删除超过 \$LOG_MAX_GZ_AGE_DAYS 天的压缩日志 \$file" >> "{}"
+        done
+    ' sh {} \;
 }
 
 # 🔁 模块：安全切换为手动模式（带重试、延时与验证）
@@ -227,6 +240,11 @@ init_hwmon_path
 
 # 🧩 主控制循环
 while true; do
+    # 检查是否为 00:01 触发日志轮转
+    if [ "\$(date '+%H:%M')" = "00:01" ]; then
+        rotate_log
+    fi
+
     NVME_TEMPS=()
     for dev in /dev/nvme*n1; do
         [ -e "\$dev" ] && T=\$(get_disk_temp "\$dev") && [[ "\$T" -gt 0 ]] && NVME_TEMPS+=("\$T")
@@ -252,13 +270,12 @@ while true; do
     }
 
     echo "\$(date '+%F %T'): NVMe=\${NVME_TEMP}°C, HDD=\${HDD_TEMP}°C, PWM3=\${PWM3_VAL}, PWM4=\${PWM4_VAL}" >> "\$LOG_FILE"
-    rotate_log
     sleep $SLEEP_INTERVAL
 done
 EOF
 
 # 生成文件路径
-TARGET_FILE="./disk_fan_control.sh"
+TARGET_FILE="/usr/local/bin/disk_fan_control.sh"
 read -p "请输入要生成的脚本路径（默认：$TARGET_FILE）：" CUSTOM_PATH
 [[ -n "$CUSTOM_PATH" ]] && TARGET_FILE="$CUSTOM_PATH"
 
@@ -280,6 +297,5 @@ chmod +x "$TARGET_FILE"
 echo "✅ 已生成风扇控制脚本：$TARGET_FILE"
 echo "ℹ️ 运行 'ls /sys/class/hwmon/*/pwm*' 查看可用 PWM 节点。"
 echo "ℹ️ 运行 'smartctl -A /dev/nvme0n1' 或 'smartctl -A /dev/sdX' 查看实际温度字段
-echo "ℹ️ 日志文件路径已设置为 $LOG_FILE，会自动轮转，最大大小为 $((LOG_MAX_SIZE / 1024))KB，保留 $LOG_BACKUPS 个压缩备份。"
+echo "ℹ️ 日志文件路径已设置为 $LOG_FILE，每天凌晨 00:01 归档为 $LOG_DIR/\$(basename "$LOG_FILE" .log).YYYY-MM-DD.log，超过 $LOG_MAX_AGE_DAYS 天压缩为 .gz，超过 $LOG_MAX_GZ_AGE_DAYS 天的压缩备份将被删除。"
 echo "ℹ️ 已检查并创建日志目录 $LOG_DIR 和日志文件 $LOG_FILE。"
-echo "ℹ️ 设备路径已使用动态通配符（NVMe: /dev/nvme*n1, HDD: /dev/sd[b-z]），无需手动配置设备列表。"
