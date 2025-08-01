@@ -396,6 +396,3 @@ MIT License
 
 ---
 
-## 🔗 项目地址
-
-GitHub: [https://github.com/skyshenma/pve-nas-fan-ctrl](https://github.com/skyshenma/pve-nas-fan-ctrl)
