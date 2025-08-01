@@ -211,6 +211,12 @@ echo 0 > /sys/class/hwmon/hwmon4/pwm4
 
 ## ⚙️ 4. 脚本生成与配置流程
 
+### 4.0 拉取项目脚本
+```bash
+git clone https://github.com/skyshenma/pve-fan-ctrl.git
+cd pve-fan-ctrl/
+```
+
 ### 4.1 编辑 `generate_disk_fan_control.sh`
 
 设置你的 PWM 通道路径：
