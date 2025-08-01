@@ -1,4 +1,4 @@
-## 📦 项目名称：pve-fan-ctrl（PVE 智能分区风扇调速系统）
+## 📦 项目名称：pve-nas-fan-ctrl（PVE 智能分区风扇调速系统）
 
 ## 🧭 项目简介
 
@@ -398,4 +398,4 @@ MIT License
 
 ## 🔗 项目地址
 
-GitHub: [https://github.com/skyshenma/pve-fan-ctrl](https://github.com/skyshenma/pve-fan-ctrl)
+GitHub: [https://github.com/skyshenma/pve-nas-fan-ctrl](https://github.com/skyshenma/pve-nas-fan-ctrl)
